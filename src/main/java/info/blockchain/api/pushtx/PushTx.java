@@ -19,8 +19,8 @@ public class PushTx {
      * @param tx Hex encoded transaction
      * @throws APIException If the server returns an error (malformed tx etc.)
      */
-    public static void pushTx (String tx) throws APIException, IOException {
-        pushTx(tx, null);
+    public static String pushTx (String tx) throws APIException, IOException {
+        return pushTx(tx, null);
     }
 
     /**
@@ -30,7 +30,7 @@ public class PushTx {
      * @param apiCode Blockchain.info API code (optional, nullable)
      * @throws APIException If the server returns an error (malformed tx etc.)
      */
-    public static void pushTx (String tx, String apiCode) throws APIException, IOException {
+    public static String pushTx (String tx, String apiCode) throws APIException, IOException {
         Map<String, String> params = new HashMap<String, String>();
         params.put("tx", tx);
 
@@ -38,6 +38,6 @@ public class PushTx {
             params.put("api_code", apiCode);
         }
 
-        HttpClient.getInstance().post("pushtx", params);
+        return HttpClient.getInstance().post("pushtx", params);
     }
 }

@@ -1,14 +1,23 @@
 package info.blockchain.api.blockexplorer;
 
+import info.blockchain.api.APIException;
 import info.blockchain.api.blockexplorer.entity.*;
+import info.blockchain.api.blockexplorer.entity.Address;
+import info.blockchain.api.blockexplorer.entity.Transaction;
+import info.blockchain.api.pushtx.PushTx;
+import org.bitcoinj.core.*;
+import org.bitcoinj.params.MainNetParams;
+import org.bitcoinj.params.TestNet3Params;
+import org.bitcoinj.script.Script;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.io.IOException;
+import java.security.SecureRandom;
+import java.util.*;
 
+import static org.bitcoinj.core.Utils.HEX;
 import static org.junit.Assert.*;
 
 /**
@@ -104,6 +113,127 @@ public class BlockExplorerTest {
         assertEquals(0, xpub.getChangeIndex());
         assertEquals(1, xpub.getAccountIndex());
         assertEquals(20, xpub.getGapLimit());
+    }
+
+    @Test
+    public void testCreateAddress(){
+        NetworkParameters parameters = new TestNet3Params();
+        ECKey ecKey = new ECKey(new SecureRandom());
+
+        String wif = ecKey.getPrivateKeyAsWiF(parameters);
+        System.out.println("wif=" + wif);
+
+
+//        org.bitcoinj.core.Address address = org.bitcoinj.core.Address.fromKey(parameters,ecKey, Script.ScriptType.P2PKH);
+//        System.out.println("address=" + address.toString());
+    }
+
+    @Test
+    public void createRawTransaction2() throws IOException, APIException {
+        String address = "1Gmrt9JrhCqrE5uyeAFDVSg9jkumKhBcZS";
+//        String priKey = "cSDpY36p44cJwQBLS3SwcTGyFzaTWwVL9nFVfa7cibdbYZ2dNJoM";
+        String priKey = "L1MH1cQXgpgvU9d9x4d4s1J6mkSnY1CnSpcm7Jg4cru8oJG3ubpP";
+        String toAddress = "12bU9ZLmJfEU35q8HfZTY97ihkmi2Mb1qL";
+        long value = 5000;
+        long fee = 1000;
+        String hex = createRawTransaction(address,toAddress,priKey,address,value,fee);
+        //Transaction transaction = blockCypherContext.getTransactionService().sendRawTransaction(hex);
+        //System.out.println("tx = " + GsonFactory.getGson().toJson(transaction));
+    }
+
+    private String createRawTransaction(String from,String to,String priKey,String change,long value , long fee) throws APIException, IOException {
+
+        NetworkParameters params = MainNetParams.get();
+
+        DumpedPrivateKey dpk = DumpedPrivateKey.fromBase58(null, priKey);
+        ECKey ecKey = dpk.getKey();
+
+        //校验私钥
+        String tmpAdr = org.bitcoinj.core.Address.fromKey(params,ecKey, Script.ScriptType.P2PKH).toString();
+        if(!from.equals(tmpAdr)){
+            throw new RuntimeException("私钥不正确");
+        }
+
+        BlockExplorer blockExplorer = new BlockExplorer();
+        List<UnspentOutput> unspentOutputs = blockExplorer.getUnspentOutputs(from);
+
+        org.bitcoinj.core.Transaction tx = new org.bitcoinj.core.Transaction(params);
+
+        if(unspentOutputs != null){
+            //排序，先消耗最小的
+            Collections.sort(unspentOutputs, new Comparator<UnspentOutput>() {
+                public int compare(UnspentOutput o1, UnspentOutput o2) {
+                    long div = o1.getValue() - o2.getValue();
+                    if(div == 0){
+                        return 0;
+                    }else if(div < 0){
+                        return -1;
+                    }else{
+                        return 1;
+                    }
+                }
+            });
+
+            List<UnspentOutput> inputSummary = new ArrayList<UnspentOutput>();
+
+            long sum = 0;
+            for (UnspentOutput summary : unspentOutputs){
+                if(sum < (value + fee)){
+                    sum += summary.getValue();
+                    inputSummary.add(summary);
+                }else{
+                    break;
+                }
+            }
+            if(sum < value + fee){
+                throw new RuntimeException("余额不足");
+            }
+
+            //计算找零，如果不指定找零剩余的金额会全部算作矿工费
+            long changeNum = sum - (value + fee);
+            //设置目标地址
+            tx.addOutput(Coin.valueOf(value), org.bitcoinj.core.Address.fromString(params,to));
+            //设置找零地址
+            tx.addOutput(Coin.valueOf(changeNum), org.bitcoinj.core.Address.fromString(params,change));
+
+            for(UnspentOutput summary : inputSummary){
+                TransactionOutPoint txopt = new TransactionOutPoint(params,summary.getN(),
+                        Sha256Hash.wrap(summary.getTransactionHash()));
+                tx.addSignedInput(txopt,new Script(HEX.decode(summary.getScript())),ecKey,
+                        org.bitcoinj.core.Transaction.SigHash.ALL, true);
+            }
+
+            String hexTx = HEX.encode(tx.bitcoinSerialize());
+            System.out.format("raw tx => %s\n",hexTx);
+
+            return hexTx;
+        }
+
+        return null;
+    }
+
+    @Test
+    public void testPushTX() throws APIException, IOException {
+        String result = PushTx.pushTx("0100000001802e3bca063acf2cf6acb36d54e5c2465b0b912621a5e02b0861d936670ac69d010000006b483045022100a50822e351d1a73d6987f7531438f417ed930fc3d26519ce4d38deddee22eeb802206ea47d2aabcf9cb7546253aad2e06e784850c645883fb7a5464e4ef990c0a8c78121033c9df7de414d742b01a3272f8263ee89b7aba49cc76301f780e69f3607332985ffffffff0288130000000000001976a914117cee1befffd5110991f5533f22faa3bbdd362d88ac46c00200000000001976a914ad05d40ab5368e771e0976843e33dec4c3d172fb88ac00000000");
+        System.out.println("tx=" + result);
+    }
+
+
+    @Test
+    public void testTxHash(){
+        String hash = "320d2b3cb26723b26321c2ea17bfaf448222a3138352d6b1c2426375a76bc214";
+        System.out.println("hex=" + HEX.encode(hash.getBytes()));
+    }
+
+    @Test
+    public void testGetTransaction() throws APIException, IOException {
+        Address address = client.getAddress("1Gmrt9JrhCqrE5uyeAFDVSg9jkumKhBcZS", FilterType.All, 10, null);
+        List<Transaction> txs = address.getTransactions();
+        if(txs != null){
+            for(Transaction tx : txs){
+                System.out.println(tx.toString());
+            }
+        }
     }
 
 }
